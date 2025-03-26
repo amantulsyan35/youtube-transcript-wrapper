@@ -2,7 +2,55 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import uvicorn
-from .proxy_manager import ProxyManager
+import random
+import requests
+import logging
+from typing import Dict, Optional, List
+
+# Define a simpler proxy manager directly in the main file
+class SimpleProxyManager:
+    def __init__(self):
+        self.proxies = []
+        self.refresh_proxies()
+    
+    def refresh_proxies(self):
+        """Fetch new proxies when needed"""
+        try:
+            # Free proxy API endpoints
+            apis = [
+                "https://api.proxyscrape.com/v2/?request=getproxies&protocol=http&timeout=10000&country=all&ssl=all&anonymity=all",
+                "https://www.proxy-list.download/api/v1/get?type=https"
+            ]
+            
+            for api in apis:
+                try:
+                    response = requests.get(api, timeout=5)
+                    if response.status_code == 200:
+                        proxy_list = response.text.strip().split("\r\n")
+                        # Format proxies properly
+                        for proxy in proxy_list:
+                            if proxy and ":" in proxy:
+                                self.proxies.append(f"http://{proxy}")
+                except Exception as e:
+                    logging.error(f"Error fetching from {api}: {str(e)}")
+            
+            logging.info(f"Refreshed proxy list. Got {len(self.proxies)} proxies.")
+        except Exception as e:
+            logging.error(f"Error refreshing proxies: {str(e)}")
+    
+    def get_proxy(self) -> Optional[Dict[str, str]]:
+        """Get a random proxy from the list"""
+        if not self.proxies:
+            self.refresh_proxies()
+            
+        if not self.proxies:
+            return None
+            
+        proxy = random.choice(self.proxies)
+        return {
+            'http': proxy,
+            'https': proxy
+        }
 
 # Initialize FastAPI app
 app = FastAPI(
@@ -12,7 +60,7 @@ app = FastAPI(
 )
 
 # Initialize proxy manager
-proxy_manager = ProxyManager()
+proxy_manager = SimpleProxyManager()
 
 # Add CORS middleware to allow cross-origin requests
 app.add_middleware(
@@ -40,7 +88,7 @@ async def get_transcript(
     
     for attempt in range(3):  # Try up to 3 times with different proxies
         try:
-            # Get transcript using proxies
+            # Use the static method to get transcript directly
             transcript_list = YouTubeTranscriptApi.get_transcript(
                 video_id, 
                 languages=[language],
@@ -81,7 +129,7 @@ async def list_transcripts(video_id: str):
     
     for attempt in range(3):  # Try up to 3 times with different proxies
         try:
-            # List available transcripts with proxies
+            # Use the static method to list transcripts
             transcript_list = YouTubeTranscriptApi.list_transcripts(
                 video_id,
                 proxies=proxies

@@ -3,5 +3,3 @@ fastapi
 uvicorn
 youtube-transcript-api
 requests
-python-dotenv
-free-proxy
