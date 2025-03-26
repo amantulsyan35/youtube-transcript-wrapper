@@ -1,13 +1,18 @@
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from youtube_transcript_api import YouTubeTranscriptApi
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import uvicorn
+from src.proxy_manager import ProxyManager
 
+# Initialize FastAPI app
 app = FastAPI(
     title="YouTube Transcript API",
     description="Retrieve transcripts for YouTube videos",
     version="1.0.0"
 )
+
+# Initialize proxy manager
+proxy_manager = ProxyManager()
 
 # Add CORS middleware to allow cross-origin requests
 app.add_middleware(
@@ -30,25 +35,38 @@ async def get_transcript(
     :param language: Language code for the transcript (default is 'en')
     :return: Transcript data
     """
-    try:
-        # Create YouTubeTranscriptApi instance
-        ytt_api = YouTubeTranscriptApi()
-        
-        # Fetch transcript
-        transcript = ytt_api.fetch(video_id, languages=[language])
-        
-        # Convert to raw data and return
-        return {
-            "video_id": video_id,
-            "language": transcript.language,
-            "language_code": transcript.language_code,
-            "is_generated": transcript.is_generated,
-            "transcript": transcript.to_raw_data()
-        }
+    # Get proxies from the proxy manager
+    proxies = proxy_manager.get_proxy()
     
-    except Exception as e:
-        # Handle potential errors
-        raise HTTPException(status_code=404, detail=str(e))
+    for attempt in range(3):  # Try up to 3 times with different proxies
+        try:
+            # Get transcript using proxies
+            transcript_list = YouTubeTranscriptApi.get_transcript(
+                video_id, 
+                languages=[language],
+                proxies=proxies
+            )
+            
+            # Return the transcript data
+            return {
+                "video_id": video_id,
+                "language": language,
+                "transcript": transcript_list
+            }
+        
+        except (TranscriptsDisabled, NoTranscriptFound) as e:
+            # These errors mean the video doesn't have transcripts, no need to retry
+            raise HTTPException(status_code=404, detail=str(e))
+            
+        except Exception as e:
+            if "IP" in str(e) and attempt < 2:
+                # If it's an IP block and we haven't exhausted our attempts,
+                # get a new proxy and try again
+                proxies = proxy_manager.get_proxy()
+                continue
+            else:
+                # On the last attempt or for other errors, raise the exception
+                raise HTTPException(status_code=404, detail=str(e))
 
 @app.get("/transcripts/{video_id}")
 async def list_transcripts(video_id: str):
@@ -58,29 +76,42 @@ async def list_transcripts(video_id: str):
     :param video_id: YouTube video ID
     :return: List of available transcripts
     """
-    try:
-        # Create YouTubeTranscriptApi instance
-        ytt_api = YouTubeTranscriptApi()
-        
-        # List available transcripts
-        transcript_list = ytt_api.list(video_id)
-        
-        # Convert to list of dictionaries with metadata
-        available_transcripts = [
-            {
-                'language': t.language,
-                'language_code': t.language_code,
-                'is_generated': t.is_generated,
-                'is_translatable': t.is_translatable,
-                'translation_languages': t.translation_languages
-            } for t in transcript_list
-        ]
-        
-        return available_transcripts
+    # Get proxies from the proxy manager
+    proxies = proxy_manager.get_proxy()
     
-    except Exception as e:
-        # Handle potential errors
-        raise HTTPException(status_code=404, detail=str(e))
+    for attempt in range(3):  # Try up to 3 times with different proxies
+        try:
+            # List available transcripts with proxies
+            transcript_list = YouTubeTranscriptApi.list_transcripts(
+                video_id,
+                proxies=proxies
+            )
+            
+            # Convert to list of dictionaries with metadata
+            available_transcripts = [
+                {
+                    'language': t.language,
+                    'language_code': t.language_code,
+                    'is_generated': t.is_generated,
+                    'is_translatable': t.is_translatable,
+                    'translation_languages': [
+                        {'language': lang.language, 'language_code': lang.language_code}
+                        for lang in t.translation_languages
+                    ] if hasattr(t, 'translation_languages') else []
+                } for t in transcript_list
+            ]
+            
+            return available_transcripts
+        
+        except Exception as e:
+            if "IP" in str(e) and attempt < 2:
+                # If it's an IP block and we haven't exhausted our attempts,
+                # get a new proxy and try again
+                proxies = proxy_manager.get_proxy()
+                continue
+            else:
+                # On the last attempt or for other errors, raise the exception
+                raise HTTPException(status_code=404, detail=str(e))
 
 @app.get("/")
 async def root():
