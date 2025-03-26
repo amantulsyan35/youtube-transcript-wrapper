@@ -2,7 +2,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 import uvicorn
-from proxy_manager import ProxyManager
+from .proxy_manager import ProxyManager
 
 # Initialize FastAPI app
 app = FastAPI(
